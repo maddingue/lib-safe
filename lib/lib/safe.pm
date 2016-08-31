@@ -76,6 +76,8 @@ __PACKAGE__
 
 __END__
 
+=encoding UTF-8
+
 =head1 NAME
 
 lib::safe - check that none of the dirs in @INC is writable by the current user
@@ -88,4 +90,8 @@ lib::safe - check that none of the dirs in @INC is writable by the current user
 
 This is an experimental pragma to somehow provide a better solution
 for the CVS-2016-1238 problem.
+
+=head1 AUTHOR
+
+Sébastien Aperghis-Tramoni
 

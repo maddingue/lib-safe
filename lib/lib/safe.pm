@@ -1,78 +1,91 @@
 package lib::safe;
 
 use strict;
-use version;
 
 use Carp qw< croak >;
+use File::Spec::Functions qw< catfile splitpath >;
 
 
+my $strict = 0;
+
+
+#
+# import()
+# ------
 sub import {
-    unshift @INC, \&my_require;
+    @INC = grep { not ref $_ or $_ != \&validate } @INC;
+    unshift @INC, \&validate;
+    $strict = 1 if grep { $_ eq "strict" } @_;
 }
 
 
+#
+# unimport()
+# --------
 sub unimport {
-    @INC = grep { $_ ne \&my_require } @INC;
+    @INC = grep { not ref $_ or $_ != \&validate } @INC;
+    $strict = 0 if grep { $_ eq "strict" } @_;
 }
 
 
-sub my_require {
+#
+# validate()
+# --------
+sub validate {
     my ($sub, $filename) = @_;
-
-    print STDERR "[my_require] filename=$filename\n";
-    croak "Missing or undefined argument to require"
-        if not defined $filename or not length $filename;
-
-    # handle "require v5..."
-    if (my $version = eval { version->parse($filename) }) {
-        if ($version > $^V) {
-           my $vn = $version->normal;
-           croak "Perl $vn required--this is only $^V, stopped";
-        }
-
-        return 1;
-    }
-
-    if (exists $INC{$filename}) {
-        return 1 if $INC{$filename};
-        croak "Compilation failed in require";
-    }
 
     for my $prefix (@INC) {
         if (ref $prefix) {
             # handle other coderefs, excluding ourselves
-            next if ref $prefix eq $sub;
+            next if ref $prefix and $prefix == $sub;
+            # ...
         }
 
-        # (see text below about possible appending of .pmc
-        # suffix to $filename)
-        my $realfilename = "$prefix/$filename";
-        next if ! -e $realfilename || -d _ || -b _;
-        $INC{$filename} = $realfilename;
-        my $pkg = caller();
-        my $result = do $realfilename;
-                     # but run in caller's namespace
+        my $pm_path = catfile($prefix, $filename);
+        my $pmc_path = $pm_path . "c";
+        my (undef, $dir_path) = splitpath($pm_path);
+        my $is_writable = -w $dir_path ? 1 : 0;
+        my $dir_is_writable_error = "directory '$dir_path' in \@INC is "
+            . "writable by the current user";
 
-        if (not defined $result) {
-            $INC{$filename} = undef;
-            croak $@ ? "$@Compilation failed in require"
-                     : "Can't locate $filename: $!\n";
+        croak $dir_is_writable_error if $strict and $is_writable;
+
+        if (-e $pmc_path) {
+            open my $fh, "<", $pmc_path
+                or croak "Can't read file '$pmc_path': $!";
+            croak $dir_is_writable_error if $is_writable;
+            return undef, $fh, undef, undef
         }
 
-        if (not $result) {
-            delete $INC{$filename};
-            croak "$filename did not return true value";
-        }
-
-        $! = 0;
-        return $result;
+        next if ! -e $pm_path || -d _ || -b _;
+        open my $fh, "<", $pm_path
+            or croak "Can't read file '$pm_path': $!";
+        croak $dir_is_writable_error if $is_writable;
+        return undef, $fh, undef, undef
     }
 
-    croak "Can't locate $filename in \@INC ...";
+    # prevent require() from going itself through @INC
+    (my $module = $filename) =~ s|/|::|g;
+    $module =~ s/\.pm$//;
+    croak "Can't locate $filename in \@INC (you may need to install "
+        . "the $module module) (\@INC contains: @INC)";
 }
 
 
 __PACKAGE__
 
 __END__
+
+=head1 NAME
+
+lib::safe - check that none of the dirs in @INC is writable by the current user
+
+=head1 SYNOPSIS
+
+    use lib::safe;
+
+=head1 DESCRIPTION
+
+This is an experimental pragma to somehow provide a better solution
+for the CVS-2016-1238 problem.
 
